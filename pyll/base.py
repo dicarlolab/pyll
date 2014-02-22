@@ -8,7 +8,7 @@ import logging; logger = logging.getLogger(__name__)
 import time
 
 from StringIO import StringIO
-from collections import deque
+from collections import deque, OrderedDict
 
 import networkx as nx
 
@@ -44,6 +44,7 @@ class SymbolTable(object):
         self._impls = {
                 'list': list,
                 'dict': dict,
+                'OrderedDict': OrderedDict,
                 'range': range,
                 'len': len,
                 'int': int,
@@ -71,48 +72,52 @@ class SymbolTable(object):
         return self._new_apply('dict', args, kwargs, o_len=None,
                 pure=True)
 
+    def OrderedDict(self, *args, **kwargs):
+        return self._new_apply('OrderedDict', args, kwargs, o_len=None,
+                pure=True)
+
     def int(self, arg):
-        return self._new_apply('int', [as_apply(arg)], {}, o_len=None,
+        return self._new_apply('int', [as_apply(arg)], OrderedDict(), o_len=None,
                 pure=True)
 
     def float(self, arg):
-        return self._new_apply('float', [as_apply(arg)], {}, o_len=None,
+        return self._new_apply('float', [as_apply(arg)], OrderedDict(), o_len=None,
                 pure=True)
 
     def len(self, obj):
-        return self._new_apply('len', [obj], {}, o_len=None,
+        return self._new_apply('len', [obj], OrderedDict(), o_len=None,
                 pure=True)
 
     def list(self, init):
-        return self._new_apply('list', [as_apply(init)], {}, o_len=None,
+        return self._new_apply('list', [as_apply(init)], OrderedDict(), o_len=None,
                 pure=True)
 
     def map(self, fn, seq, pure=False):
         """
         pure - True is assertion that fn does not modify seq[i]
         """
-        return self._new_apply('map', [as_apply(fn), as_apply(seq)], {},
+        return self._new_apply('map', [as_apply(fn), as_apply(seq)], OrderedDict(),
                                o_len=seq.o_len,
                                pure=pure
                                )
 
     def range(self, *args):
-        return self._new_apply('range', args, {}, o_len=None, pure=True)
+        return self._new_apply('range', args, OrderedDict(), o_len=None, pure=True)
 
     def max(self, *args):
         """ return max of args """
-        return self._new_apply('max', map(as_apply, args), {},
+        return self._new_apply('max', map(as_apply, args), OrderedDict(),
                 o_len=None, pure=True)
 
     def min(self, *args):
         """ return min of args """
-        return self._new_apply('min', map(as_apply, args), {},
+        return self._new_apply('min', map(as_apply, args), OrderedDict(),
                 o_len=None, pure=True)
 
     def getattr(self, obj, attr, *args):
         return self._new_apply('getattr',
                 [as_apply(obj), as_apply(attr)] + map(as_apply, args),
-                {},
+                OrderedDict(),
                 o_len=None,
                 pure=True)
 
@@ -144,7 +149,7 @@ class SymbolTable(object):
 
         This is used for import-like syntax: see `import_`.
         """
-        rval = {}
+        rval = OrderedDict()
         for k in args:
             try:
                 rval[k] = getattr(self, k)
@@ -186,9 +191,13 @@ def as_apply(obj):
     if isinstance(obj, Apply):
         rval = obj
     elif isinstance(obj, tuple):
-        rval = Apply('pos_args', [as_apply(a) for a in obj], {}, len(obj))
+        rval = Apply('pos_args', [as_apply(a) for a in obj], OrderedDict(), len(obj))
     elif isinstance(obj, list):
-        rval = Apply('pos_args', [as_apply(a) for a in obj], {}, None)
+        rval = Apply('pos_args', [as_apply(a) for a in obj], OrderedDict(), None)
+    elif isinstance(obj, OrderedDict):
+        items = obj.items()
+        new_items = [(k, as_apply(v)) for (k, v) in items]
+        rval = Apply('OrderedDict', [as_apply(new_items)], OrderedDict(), o_len=None)
     elif isinstance(obj, dict):
         items = obj.items()
         # -- should be fine to allow numbers and simple things
@@ -252,12 +261,12 @@ class Apply(object):
         offers a quick and simple way to evaluate them.
         """
         if memo is None:
-            memo = {}
+            memo = OrderedDict()
         if id(self) in memo:
             return memo[id(self)]
         else:
             args = [a.eval() for a in self.pos_args]
-            kwargs = dict([(n, a.eval()) for (n, a) in self.named_args])
+            kwargs = OrderedDict([(n, a.eval()) for (n, a) in self.named_args])
             f = scope._impls[self.name]
             memo[id(self)] = rval = f(*args, **kwargs)
             return rval
@@ -279,7 +288,7 @@ class Apply(object):
         #
         # http://docs.python.org/reference/expressions.html#calls
         #
-        binding = {}
+        binding = OrderedDict()
 
         fn = scope._impls[self.name]
         # XXX does not work for builtin functions
@@ -322,7 +331,7 @@ class Apply(object):
             binding[args_param] == []
 
         if extra_kwargs_ok:
-            binding[kwargs_param] == {}
+            binding[kwargs_param] == OrderedDict()
 
         if len(self.pos_args) > code.co_argcount and not extra_args_ok:
             raise TypeError('Argument count exceeds number of positional params')
@@ -396,7 +405,7 @@ class Apply(object):
 
     def pprint(self, ofile, lineno=None, indent=0, memo=None):
         if memo is None:
-            memo = {}
+            memo = OrderedDict()
         if lineno is None:
             lineno = [0]
 
@@ -503,12 +512,12 @@ class Literal(Apply):
             o_len = len(obj)
         except TypeError:
             o_len = None
-        Apply.__init__(self, 'literal', [], {}, o_len, pure=True)
+        Apply.__init__(self, 'literal', [], OrderedDict(), o_len, pure=True)
         self._obj = obj
 
     def eval(self, memo=None):
         if memo is None:
-            memo = {}
+            memo = OrderedDict()
         return memo.setdefault(id(self), self._obj)
 
     @property
@@ -517,13 +526,13 @@ class Literal(Apply):
 
     @property
     def arg(self):
-        return {}
+        return OrderedDict()
 
     def pprint(self, ofile, lineno=None, indent=0, memo=None):
         if lineno is None:
             lineno = [0]
         if memo is None:
-            memo = {}
+            memo = OrderedDict()
         if self in memo:
             print >> ofile, lineno[0], ' ' * indent + memo[self]
         else:
@@ -559,7 +568,7 @@ class Lambda(object):
         # -- return `expr` cloned from given args and kwargs
         if len(args) > len(self.params):
             raise TypeError('too many arguments')
-        memo = {}
+        memo = OrderedDict()
         for arg, param in zip(args, self.params):
             #print 'applying with arg', param, arg
             memo[param[1]] = as_apply(arg)
@@ -587,7 +596,7 @@ p4 = Literal(UndefinedValue)
 
 
 @scope.define
-def call(fn, args=(), kwargs={}):
+def call(fn, args=(), kwargs=OrderedDict()):
     """ call fn with given args and kwargs.
 
     This is used to represent Apply.__call__
@@ -675,7 +684,7 @@ def toposort(expr):
 
 def clone(expr, memo=None):
     if memo is None:
-        memo = {}
+        memo = OrderedDict()
     nodes = dfs(expr)
     for node in nodes:
         if node not in memo:
@@ -688,7 +697,7 @@ def clone(expr, memo=None):
 def clone_merge(expr, memo=None, merge_literals=False):
     nodes = dfs(expr)
     if memo is None:
-        memo = {}
+        memo = OrderedDict()
     # -- args are somewhat slow to construct, so cache them out front
     #    XXX node.arg does not always work (builtins, weird co_flags)
     node_args = [(node.pos_args, node.named_args) for node in nodes]
@@ -763,9 +772,9 @@ def rec_eval(expr, deepcopy_inputs=False, memo=None,
     topnode = node
 
     if memo is None:
-        memo = {}
+        memo = OrderedDict()
     else:
-        memo = dict(memo)
+        memo = OrderedDict(memo)
 
     # TODO: optimize dfs to not recurse past the items in memo
     #       this is especially important for evaluating Lambdas
@@ -774,7 +783,7 @@ def rec_eval(expr, deepcopy_inputs=False, memo=None,
     # N.B. that Lambdas may expand the graph during the evaluation
     #      so that this iteration may be an incomplete
     if memo_gc:
-        clients = {}
+        clients = OrderedDict()
         for aa in dfs(node):
             clients.setdefault(aa, set())
             for ii in aa.inputs():
@@ -844,7 +853,7 @@ def rec_eval(expr, deepcopy_inputs=False, memo=None,
             # -- not waiting on anything;
             #    this instruction can be evaluated.
             args = _args = [memo[v] for v in node.pos_args]
-            kwargs = _kwargs = dict([(k, memo[v])
+            kwargs = _kwargs = OrderedDict([(k, memo[v])
                 for (k, v) in node.named_args])
 
             if memo_gc:
@@ -854,10 +863,9 @@ def rec_eval(expr, deepcopy_inputs=False, memo=None,
             if deepcopy_inputs:
                 args = copy.deepcopy(_args)
                 kwargs = copy.deepcopy(_kwargs)
-
+                
             try:
                 rval = scope._impls[node.name](*args, **kwargs)
-
             except Exception, e:
                 if print_node_on_error:
                     print '=' * 80
